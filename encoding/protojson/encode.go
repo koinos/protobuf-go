@@ -39,6 +39,15 @@ func Marshal(m proto.Message) ([]byte, error) {
 	return MarshalOptions{}.Marshal(m)
 }
 
+// FieldOverride overrides the JSON serialization with custon Marshal/Unmarshal
+type FieldOverride struct {
+	// MarshalField returns raw byte encoding on success, nil to skip override, and error on failure
+	MarshalField func(val pref.Value, fd pref.FieldDescriptor, opt MarshalOptions) ([]byte, error)
+
+	// MarshalField returns a Value on success, Value{} to skip override, and error on failure
+	UnmarshalField func(b []byte, fd pref.FieldDescriptor, opt UnmarshalOptions) (pref.Value, error)
+}
+
 // MarshalOptions is a configurable JSON format marshaler.
 type MarshalOptions struct {
 	pragma.NoUnkeyedLiterals
@@ -88,6 +97,9 @@ type MarshalOptions struct {
 		protoregistry.ExtensionTypeResolver
 		protoregistry.MessageTypeResolver
 	}
+
+	// FieldOverrides is used for substituting an alternative JSON serialization
+	FieldOverrides map[pref.Kind]FieldOverride
 }
 
 // Format formats the message as a string.
@@ -119,6 +131,10 @@ func (o MarshalOptions) marshal(m proto.Message) ([]byte, error) {
 	}
 	if o.Resolver == nil {
 		o.Resolver = protoregistry.GlobalTypes
+	}
+
+	if o.FieldOverrides == nil {
+		o.FieldOverrides = make(map[pref.Kind]FieldOverride)
 	}
 
 	internalEnc, err := json.NewEncoder(o.Indent)
@@ -257,57 +273,75 @@ func (e encoder) marshalSingular(val pref.Value, fd pref.FieldDescriptor) error 
 		return nil
 	}
 
-	switch kind := fd.Kind(); kind {
-	case pref.BoolKind:
-		e.WriteBool(val.Bool())
+	kind := fd.Kind()
+	usedOverride := false
 
-	case pref.StringKind:
-		if e.WriteString(val.String()) != nil {
-			return errors.InvalidUTF8(string(fd.FullName()))
-		}
-
-	case pref.Int32Kind, pref.Sint32Kind, pref.Sfixed32Kind:
-		e.WriteInt(val.Int())
-
-	case pref.Uint32Kind, pref.Fixed32Kind:
-		e.WriteUint(val.Uint())
-
-	case pref.Int64Kind, pref.Sint64Kind, pref.Uint64Kind,
-		pref.Sfixed64Kind, pref.Fixed64Kind:
-		// 64-bit integers are written out as JSON string.
-		e.WriteString(val.String())
-
-	case pref.FloatKind:
-		// Encoder.WriteFloat handles the special numbers NaN and infinites.
-		e.WriteFloat(val.Float(), 32)
-
-	case pref.DoubleKind:
-		// Encoder.WriteFloat handles the special numbers NaN and infinites.
-		e.WriteFloat(val.Float(), 64)
-
-	case pref.BytesKind:
-		e.WriteString(base64.StdEncoding.EncodeToString(val.Bytes()))
-
-	case pref.EnumKind:
-		if fd.Enum().FullName() == genid.NullValue_enum_fullname {
-			e.WriteNull()
-		} else {
-			desc := fd.Enum().Values().ByNumber(val.Enum())
-			if e.opts.UseEnumNumbers || desc == nil {
-				e.WriteInt(int64(val.Enum()))
-			} else {
-				e.WriteString(string(desc.Name()))
-			}
-		}
-
-	case pref.MessageKind, pref.GroupKind:
-		if err := e.marshalMessage(val.Message(), ""); err != nil {
+	if override, ok := e.opts.FieldOverrides[kind]; ok {
+		bytes, err := override.MarshalField(val, fd, e.opts)
+		if err != nil {
 			return err
 		}
 
-	default:
-		panic(fmt.Sprintf("%v has unknown kind: %v", fd.FullName(), kind))
+		if bytes != nil {
+			e.WriteRaw(bytes)
+			usedOverride = true
+		}
 	}
+
+	if !usedOverride {
+		switch kind {
+		case pref.BoolKind:
+			e.WriteBool(val.Bool())
+
+		case pref.StringKind:
+			if e.WriteString(val.String()) != nil {
+				return errors.InvalidUTF8(string(fd.FullName()))
+			}
+
+		case pref.Int32Kind, pref.Sint32Kind, pref.Sfixed32Kind:
+			e.WriteInt(val.Int())
+
+		case pref.Uint32Kind, pref.Fixed32Kind:
+			e.WriteUint(val.Uint())
+
+		case pref.Int64Kind, pref.Sint64Kind, pref.Uint64Kind,
+			pref.Sfixed64Kind, pref.Fixed64Kind:
+			// 64-bit integers are written out as JSON string.
+			e.WriteString(val.String())
+
+		case pref.FloatKind:
+			// Encoder.WriteFloat handles the special numbers NaN and infinites.
+			e.WriteFloat(val.Float(), 32)
+
+		case pref.DoubleKind:
+			// Encoder.WriteFloat handles the special numbers NaN and infinites.
+			e.WriteFloat(val.Float(), 64)
+
+		case pref.BytesKind:
+			e.WriteString(base64.StdEncoding.EncodeToString(val.Bytes()))
+
+		case pref.EnumKind:
+			if fd.Enum().FullName() == genid.NullValue_enum_fullname {
+				e.WriteNull()
+			} else {
+				desc := fd.Enum().Values().ByNumber(val.Enum())
+				if e.opts.UseEnumNumbers || desc == nil {
+					e.WriteInt(int64(val.Enum()))
+				} else {
+					e.WriteString(string(desc.Name()))
+				}
+			}
+
+		case pref.MessageKind, pref.GroupKind:
+			if err := e.marshalMessage(val.Message(), ""); err != nil {
+				return err
+			}
+
+		default:
+			panic(fmt.Sprintf("%v has unknown kind: %v", fd.FullName(), kind))
+		}
+	}
+
 	return nil
 }
 

@@ -5,6 +5,7 @@
 package protojson_test
 
 import (
+	"encoding/hex"
 	"math"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/protobuf/internal/errors"
 	"google.golang.org/protobuf/internal/flags"
 	"google.golang.org/protobuf/proto"
+	pref "google.golang.org/protobuf/reflect/protoreflect"
 	preg "google.golang.org/protobuf/reflect/protoregistry"
 
 	testpb "google.golang.org/protobuf/internal/testprotos/test"
@@ -2452,6 +2454,71 @@ func TestUnmarshal(t *testing.T) {
 		inputText:    `{"weak_message1":{"a":1}, "weak_message2":{"a":1}}`,
 		wantErr:      `unknown field "weak_message2"`, // weak_message2 is unknown since the package containing it is not imported
 		skip:         !flags.ProtoLegacy,
+	}, {
+		desc: "field override",
+		umo: protojson.UnmarshalOptions{
+			FieldOverrides: map[pref.Kind]protojson.FieldOverride{
+				pref.BytesKind: protojson.FieldOverride{
+					MarshalField: func(val pref.Value, fd pref.FieldDescriptor, opt protojson.MarshalOptions) ([]byte, error) {
+						return nil, nil
+					},
+					UnmarshalField: func(b []byte, fd pref.FieldDescriptor, opt protojson.UnmarshalOptions) (pref.Value, error) {
+						bytes, err := hex.DecodeString(string(b[1 : len(b)-1]))
+						if err != nil {
+							return pref.Value{}, err
+						}
+						return pref.ValueOfBytes(bytes), nil
+					},
+				},
+			},
+		},
+		inputMessage: &pb3.Proto3Optional{},
+		inputText: `{
+  "optBytes": "666f6f626172"
+}`,
+		wantMessage: &pb3.Proto3Optional{
+			OptBytes: []byte("foobar"),
+		},
+	}, {
+		desc: "field skip override",
+		umo: protojson.UnmarshalOptions{
+			FieldOverrides: map[pref.Kind]protojson.FieldOverride{
+				pref.BytesKind: protojson.FieldOverride{
+					MarshalField: func(val pref.Value, fd pref.FieldDescriptor, opt protojson.MarshalOptions) ([]byte, error) {
+						return nil, nil
+					},
+					UnmarshalField: func(b []byte, fd pref.FieldDescriptor, opt protojson.UnmarshalOptions) (pref.Value, error) {
+						return pref.Value{}, nil
+					},
+				},
+			},
+		},
+		inputMessage: &pb3.Proto3Optional{},
+		inputText: `{
+  "optBytes": "Zm9vYmFy"
+}`,
+		wantMessage: &pb3.Proto3Optional{
+			OptBytes: []byte("foobar"),
+		},
+	}, {
+		desc: "field override",
+		umo: protojson.UnmarshalOptions{
+			FieldOverrides: map[pref.Kind]protojson.FieldOverride{
+				pref.BytesKind: protojson.FieldOverride{
+					MarshalField: func(val pref.Value, fd pref.FieldDescriptor, opt protojson.MarshalOptions) ([]byte, error) {
+						return nil, nil
+					},
+					UnmarshalField: func(b []byte, fd pref.FieldDescriptor, opt protojson.UnmarshalOptions) (pref.Value, error) {
+						return pref.Value{}, errors.New("test error")
+					},
+				},
+			},
+		},
+		inputMessage: &pb3.Proto3Optional{},
+		inputText: `{
+  "optBytes": "Zm9vYmFy"
+}`,
+		wantErr: "test error",
 	}}
 
 	for _, tt := range tests {

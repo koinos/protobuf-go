@@ -185,6 +185,12 @@ func (e *Encoder) WriteUint(n uint64) {
 	e.out = append(e.out, strconv.FormatUint(n, 10)...)
 }
 
+// WriteRaw writes out the bytes directly to the encoder.
+func (e *Encoder) WriteRaw(b []byte) {
+	e.prepareNext(scalar)
+	e.out = append(e.out, b...)
+}
+
 // StartObject writes out the '{' symbol.
 func (e *Encoder) StartObject() {
 	e.prepareNext(objectOpen)
