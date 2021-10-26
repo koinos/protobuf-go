@@ -5,6 +5,7 @@
 package prototext_test
 
 import (
+	"encoding/hex"
 	"math"
 	"testing"
 
@@ -12,8 +13,10 @@ import (
 
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/internal/detrand"
+	"google.golang.org/protobuf/internal/errors"
 	"google.golang.org/protobuf/internal/flags"
 	"google.golang.org/protobuf/proto"
+	pref "google.golang.org/protobuf/reflect/protoreflect"
 	preg "google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/testing/protopack"
 
@@ -1408,6 +1411,63 @@ value: "\x80"
   }
 }
 `,
+	}, {
+		desc: "field override",
+		mo: prototext.MarshalOptions{
+			FieldOverrides: map[pref.Kind]prototext.FieldOverride{
+				pref.BytesKind: prototext.FieldOverride{
+					MarshalField: func(val pref.Value, fd pref.FieldDescriptor, opt prototext.MarshalOptions) ([]byte, error) {
+						hexStr := "\"" + hex.EncodeToString(val.Bytes()) + "\""
+						return []byte(hexStr), nil
+					},
+					UnmarshalField: func(b []byte, fd pref.FieldDescriptor, opt prototext.UnmarshalOptions) (pref.Value, error) {
+						return pref.Value{}, nil
+					},
+				},
+			},
+		},
+		input: &pb3.Proto3Optional{
+			OptBytes: []byte("foobar"),
+		},
+		want: `opt_bytes: "666f6f626172"
+`,
+	}, {
+		desc: "field skip override",
+		mo: prototext.MarshalOptions{
+			FieldOverrides: map[pref.Kind]prototext.FieldOverride{
+				pref.BytesKind: prototext.FieldOverride{
+					MarshalField: func(val pref.Value, fd pref.FieldDescriptor, opt prototext.MarshalOptions) ([]byte, error) {
+						return nil, nil
+					},
+					UnmarshalField: func(b []byte, fd pref.FieldDescriptor, opt prototext.UnmarshalOptions) (pref.Value, error) {
+						return pref.Value{}, nil
+					},
+				},
+			},
+		},
+		input: &pb3.Proto3Optional{
+			OptBytes: []byte("foobar"),
+		},
+		want: `opt_bytes: "foobar"
+`,
+	}, {
+		desc: "field error override",
+		mo: prototext.MarshalOptions{
+			FieldOverrides: map[pref.Kind]prototext.FieldOverride{
+				pref.BytesKind: prototext.FieldOverride{
+					MarshalField: func(val pref.Value, fd pref.FieldDescriptor, opt prototext.MarshalOptions) ([]byte, error) {
+						return nil, errors.New("test error")
+					},
+					UnmarshalField: func(b []byte, fd pref.FieldDescriptor, opt prototext.UnmarshalOptions) (pref.Value, error) {
+						return pref.Value{}, nil
+					},
+				},
+			},
+		},
+		input: &pb3.Proto3Optional{
+			OptBytes: []byte("foobar"),
+		},
+		wantErr: true,
 	}}
 
 	for _, tt := range tests {

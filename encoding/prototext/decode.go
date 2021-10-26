@@ -49,6 +49,9 @@ type UnmarshalOptions struct {
 		protoregistry.MessageTypeResolver
 		protoregistry.ExtensionTypeResolver
 	}
+
+	// FieldOverrides is used for substituting an alternative text serialization
+	FieldOverrides map[pref.Kind]FieldOverride
 }
 
 // Unmarshal reads the given []byte and populates the given proto.Message
@@ -291,6 +294,17 @@ func (d decoder) unmarshalScalar(fd pref.FieldDescriptor) (pref.Value, error) {
 	}
 
 	kind := fd.Kind()
+
+	if override, ok := d.opts.FieldOverrides[kind]; ok {
+		val, err := override.UnmarshalField([]byte(tok.RawString()), fd, d.opts)
+		if err != nil {
+			return val, err
+		}
+		if val.IsValid() {
+			return val, nil
+		}
+	}
+
 	switch kind {
 	case pref.BoolKind:
 		if b, ok := tok.Bool(); ok {
